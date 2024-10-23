@@ -1,6 +1,6 @@
 #ifndef ADDER_H
 #define ADDER_H
 
-char adder(char a,char b);
+int adder(int a,int b);
 
 #endif //ADDER_H
