@@ -21,7 +21,7 @@ __attribute__((format(printf, 1, 3)))
 static void println(char *fmt,Knob_String_Builder* sb, ...) {
   char temp[512] = {0};
   va_list ap;
-  va_start(ap, fmt);
+  va_start(ap,fmt);
   size_t b_len = vsnprintf(temp,512,fmt,ap);
   va_end(ap);
   knob_sb_append_buf(sb,temp,b_len);
@@ -29,10 +29,10 @@ static void println(char *fmt,Knob_String_Builder* sb, ...) {
 }
 
 
-static int is_first_data;
-static void invalidate_statics_vars(void){
-    is_first_data = true;
-}
+// static int is_first_data;
+// static void invalidate_statics_vars(void){
+//     is_first_data = true;
+// }
 // static void add_data_section(void){
 //     if(is_first_data){
 //         println("data");
@@ -63,6 +63,8 @@ static void invalidate_statics_vars(void){
 char* type_to_str(Type* type){
     static char temp[3] = {0};
     switch(type->kind){
+
+        case TY_CHAR:
         case TY_INT:{
             temp[0] = 'I';
             temp[1] = '0' + type->size;
@@ -132,6 +134,22 @@ char* type_to_str(Type* type){
 // ND_VLA_PTR,   // VLA designator
 // ND_NUM,       // Integer
 // ND_MEMZERO,   // Zero-clear a stack variable
+typedef struct {
+    Obj** items;
+    size_t count;
+    size_t capacity;
+} Locals;
+static Locals locals = {0};
+static int get_local_offset(const char* name){
+    int offset = 0;
+    for(int i =locals.count-1; i >= 0;--i){
+        if(knob_cstr_match(name,locals.items[i]->name)){
+            break;
+        }
+        offset += 4;
+    }
+    return offset;
+}
 static Obj* parameters = NULL;
 static int is_func_parameter(Obj* var){
     int parm_i = 0;
@@ -145,58 +163,145 @@ static int is_func_parameter(Obj* var){
     }
     return out_val;
 }
-void gen_from_body(Node* body,Knob_String_Builder* sb){
+const char* ops[] = {
+    ";NULL",//ND_NULL_EXPR We shouldn't get this
+    "ADD%s",//ND_ADD
+    "SUB%s",//ND_SUB
+    "MUL%s",//ND_MUL
+    "DIV%s",//ND_DIV
+};
+int gen_from_body(Node* body,Knob_String_Builder* sb){
     switch(body->kind){
-        case ND_RETURN:{
+        char* fmt = NULL;
+        //OPS
+        case ND_ADD:
+        case ND_SUB:
+        case ND_MUL:
+        fmt = ops[body->kind];
+        gen_from_body(body->lhs,sb);
+        char* type_str = NULL;
+        // if(end_kind == ND_VAR){
+        //     type_str = type_to_str(body->lhs->ty);
+        //     println("INDIR%s",sb,type_str);
+        // }
+        gen_from_body(body->rhs,sb);
+        // if(end_kind == ND_VAR){
+        //     type_str = type_to_str(body->rhs->ty);
+        //     println("INDIR%s",sb,type_str);
+        // }
+        type_str = type_to_str(body->ty);
+        println(fmt,sb,type_str);
+        break;
+        //END OPS
+        case ND_COMMA:{
             gen_from_body(body->lhs,sb);
-            char* ret_type = type_to_str(body->lhs->ty);
-            println("RET%s",sb,ret_type);
+            gen_from_body(body->rhs,sb);
+            return ND_COMMA;
+        }
+        case ND_EXPR_STMT:{
+            gen_from_body(body->lhs,sb);
             break;
         }
-        case ND_CAST:{      // Type cast
-            gen_from_body(body->lhs,sb);
-            if(body->ty->kind != body->lhs->ty->kind){
-                assert(0 && "Add conversion...");
-                //Think about doing conversion....
-            }
-            break;
-        }
-        case ND_ADD:{
+        case ND_ASSIGN:{
             gen_from_body(body->lhs,sb);
             gen_from_body(body->rhs,sb);
             char* type_str = type_to_str(body->ty);
-            println("ADD%s",sb,type_str);
+
+            // if (node->lhs->kind == ND_MEMBER && node->lhs->member->is_bitfield) {
+            //     println("  mov %%rax, %%r8");
+
+            //     // If the lhs is a bitfield, we need to read the current value
+            //     // from memory and merge it with a new value.
+            //     Member *mem = node->lhs->member;
+            //     println("  mov %%rax, %%rdi");
+            //     println("  and $%ld, %%rdi", (1L << mem->bit_width) - 1);
+            //     println("  shl $%d, %%rdi", mem->bit_offset);
+
+            //     println("  mov (%%rsp), %%rax");
+            //     load(mem->ty);
+
+            //     long mask = ((1L << mem->bit_width) - 1) << mem->bit_offset;
+            //     println("  mov $%ld, %%r9", ~mask);
+            //     println("  and %%r9, %%rax");
+            //     println("  or %%rdi, %%rax");
+            //     store(node->ty);
+            //     println("  mov %%r8, %%rax");
+            //     return;
+            // }
+            println("ASGN%s",sb,type_str);
+            return ND_ASSIGN;
+        }
+        case ND_MEMZERO: {
+            break;
+        }
+        case ND_BLOCK:{
+            for (Node *n = body->body; n; n = n->next)
+                gen_from_body(n,sb);
+            break;
+        }
+        case ND_NULL_EXPR:{
             break;
         }
         case ND_VAR: {
             int parm_i = is_func_parameter(body->var);
             if(body->var->is_local){
                 if(parm_i >= 0){
-                    char* type_str = type_to_str(body->ty);
-                    println("ADDRFP4 %ld",sb,parm_i * 4);
-                    println("INDIR%s",sb,type_str);
+                    println("ADDRFP4 %d",sb,parm_i * 4);
                 }
                 else {
-                    assert(0 && "Local variables need to be supported");
+                    int offset = get_local_offset(body->var->name);
+                    println("ADDRLP4 %d",sb,offset);
                 }
             }
             else {
                 assert(0 && "Global variables need to be supported");
             }
-            break;
+            return ND_VAR;
         }
         case ND_NUM: {
             char* type_str = type_to_str(body->ty);
             println("CNST%s %ld",sb,type_str,body->val);
+            return ND_NUM;
+        }
+        case ND_CAST:{      // Type cast
+            int ret = gen_from_body(body->lhs,sb);
+            char* type_str = NULL;
+            if(ret == ND_VAR){
+                type_str = type_to_str(body->lhs->ty);
+                println("INDIR%s",sb,type_str);
+            }
+            if(body->ty->kind != body->lhs->ty->kind){
+                type_str = type_to_str(body->ty);
+                if(body->ty->kind == TY_INT && body->ty->is_unsigned){                
+                    println("CVU%s %d",sb,type_str,body->lhs->ty->size);
+                }
+                else if(body->ty->kind == TY_INT){
+                    println("CVI%s %d",sb,type_str,body->lhs->ty->size);
+                }
+                else if(body->ty->kind == TY_FLOAT){
+                    println("CVF%s %d",sb,type_str,body->lhs->ty->size);
+                }
+                else {
+                    assert(0 && "UNREACHABLE");
+                }
+                //@TODO: Should we return ND_CAST since we should do the inderection before the conversion...
+            }
+            return ret;
+        }
+        case ND_RETURN:{
+            gen_from_body(body->lhs,sb);
+            char* ret_type = type_to_str(body->lhs->ty);
+            println("RET%s",sb,ret_type);
             break;
         }
         default:
             break;
     }
+    return ND_NULL_EXPR;
 }
 void codegen(Obj *prog, FILE *out){
     output_file = out;
-    Knob_String_Builder start = {0};
+    // Knob_String_Builder start = {0};
     Knob_String_Builder end = {0};
     int func_count = 1;
     Obj* last = NULL;
@@ -207,13 +312,20 @@ void codegen(Obj *prog, FILE *out){
                 println("code",&end);
             }
             int locals_needed_bytes = 0;
+            for(Obj* local = fn->locals;local;local = local->next){
+                //@TODO: Validate that this is always alloca_size
+                if(knob_cstr_match(local->name,"__alloca_size__")){
+                    break;
+                }
+                locals_needed_bytes += local->ty->size;
+                knob_da_append(&locals,local);
+            }
             int args_marshalling_bytes = 0;
             println("proc %s %d %d",&end,fn->name,locals_needed_bytes,args_marshalling_bytes);
-            Type* ret_type = fn->ty->return_ty;
+            // Type* ret_type = fn->ty->return_ty;
             parameters = fn->params;
             for(Node* bod = fn->body->body;bod; bod = bod->next){
                 gen_from_body(bod,&end);
-                printf("Hello World !");
             }
             println("LABELV $%d",&end,func_count++);
             println("endproc %s %d %d",&end,fn->name,locals_needed_bytes,args_marshalling_bytes);

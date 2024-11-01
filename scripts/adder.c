@@ -1,15 +1,20 @@
 #include "adder.h"
 // float variableC =0.1f;
 // int variableB;
-int adder(int a,int b){
+int adder(char a,int b){
     // int c = 420;
     // int d = 69;
     return a+b;
 }
 int adder_abs(int a,int b){
     // int c = 420;
-    // int d = 69;
-    return 34+35;
+    int d = 35;
+    return 34+d;
+}
+int subber(int a,int b){
+    int c = a-b;
+    int d = a+c;
+    return d*c;
 }
 //@TODO: Reevaluate the generation with chibicc of multiple 
 // Global vars that are initiliazed at different positions. The 
