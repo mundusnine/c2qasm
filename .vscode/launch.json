@@ -1,0 +1,50 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "(game) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceRoot}/Deployment/runtime_test.com",
+        "args": [  ],
+        "stopAtEntry": false,
+        "cwd": "${workspaceRoot}/Deployment",
+        "preLaunchTask": "Build game"
+      },
+      {
+        "name": "(compiler) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceRoot}/bin/chibicc.com",
+        "args": ["-cc1","-cc1-input","./scripts/adder.c","-cc1-output","./build/chibi_adder.asm"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceRoot}",
+        "preLaunchTask": "Build game"
+      },
+      {
+        "name": "(tests) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceRoot}/tests/run_tests.com",
+        "args": [],
+        "stopAtEntry": false,
+        "cwd": "${workspaceRoot}",
+        "preLaunchTask": "Build game"
+      },
+      {
+        "name": "(knob) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/knob",
+        "args": ["clean"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceRoot}",
+        "preLaunchTask": "Build knob"
+      }
+    ]
+        
+    
+}

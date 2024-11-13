@@ -1,0 +1,8 @@
+build/**
+tags
+knob
+**chibicc.com
+Deployment/**
+!Deployment/*.asm
+chibicc
+tests

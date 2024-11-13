@@ -32,9 +32,13 @@ static void q3vm_add_scripts_folder(const char* folder_path){
 #define ASM_FOLDER "Deployment"
 static int q3vm_build(const char* root, int verifyBeforeBuild){
     size_t checkpoint = knob_temp_save();
-    // @TODO: Add flags for Windows.
+    #ifdef CHIBICC_IMPL
+    #define LCC "%s/bin/chibicc.com"
+    #define CFLAGS(asmFile,scriptFile) "-cc1","-cc1-input",scriptFile,"-cc1-output",asmFile
+    #else
     #define LCC "%s/bin/lcc.com"
-    #define CFLAGS "-S", "-Wf-target=bytecode", "-Wf-g"
+    #define CFLAGS(asmFile,scriptFile) "-S", "-Wf-target=bytecode", "-Wf-g","-o",asmFile,scriptFile
+    #endif
 
     #define ASSEMBLER "%s/bin/q3asm"
 
@@ -62,7 +66,7 @@ static int q3vm_build(const char* root, int verifyBeforeBuild){
         char* asmName = knob_temp_sprintf("%s"PATH_SEP"build"PATH_SEP"%s.asm",root,filename);
         if(!verifyBeforeBuild || (verifyBeforeBuild && knob_needs_rebuild1(asmName,scriptName))){
             isRebuild = 1;
-            knob_cmd_append(&cmd,knob_temp_sprintf(LCC,root),CFLAGS,"-DQ3_VM","-o",asmName,scriptName);
+            knob_cmd_append(&cmd,knob_temp_sprintf(LCC,root),CFLAGS(asmName,scriptName),"-DQ3_VM");
             if(!knob_cmd_run_sync(cmd)){
                 printf("Error: Couldn't build file !\n");
                 return -1;

@@ -62,22 +62,36 @@ static void println(char *fmt,Knob_String_Builder* sb, ...) {
 // }
 char* type_to_str(Type* type){
     static char temp[3] = {0};
+    int size = type->size;
     switch(type->kind){
 
         case TY_CHAR:
+        case TY_SHORT:
+        case TY_LONG:
         case TY_INT:{
-            temp[0] = 'I';
-            temp[1] = '0' + type->size;
+            if(type->is_unsigned){
+                temp[0] = 'U';
+            }
+            else {
+                temp[0] = 'I';
+            }
+            temp[1] = '0' + size;
+            break;
+        }
+        case TY_LDOUBLE:
+        case TY_DOUBLE:{
+            size = 4;
+            knob_log(KNOB_ERROR,"double is not supported, operations will be done with type: float");
+            goto AS_FLOAT;
+        }
+        case TY_FLOAT:{
+        AS_FLOAT:
+            temp[0] = 'F';
+            temp[1] = '0' + size;
             break;
         }
         //     TY_VOID,
         //   TY_BOOL,
-        //   TY_CHAR,
-        //   TY_SHORT,
-        //   TY_LONG,
-        //   TY_FLOAT,
-        //   TY_DOUBLE,
-        //   TY_LDOUBLE,
         //   TY_ENUM,
         //   TY_PTR,
         //   TY_FUNC,
@@ -169,6 +183,8 @@ const char* ops[] = {
     "SUB%s",//ND_SUB
     "MUL%s",//ND_MUL
     "DIV%s",//ND_DIV
+    "NEG%s",//ND_NEG
+    "MOD%s",//ND_MOD
 };
 int gen_from_body(Node* body,Knob_String_Builder* sb){
     switch(body->kind){
@@ -177,6 +193,8 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
         case ND_ADD:
         case ND_SUB:
         case ND_MUL:
+        case ND_DIV:
+        case ND_MOD:
         fmt = ops[body->kind];
         gen_from_body(body->lhs,sb);
         char* type_str = NULL;
@@ -263,6 +281,16 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
             println("CNST%s %ld",sb,type_str,body->val);
             return ND_NUM;
         }
+        case ND_DEREF:{
+            gen_from_body(body->lhs,sb);
+            println("INDIRP4",sb);
+            break;
+        }
+        case ND_ADDR:{
+            gen_from_body(body->lhs,sb);
+            println("ADDRGP4 $%d",sb,1);
+            break;
+        }
         case ND_CAST:{      // Type cast
             int ret = gen_from_body(body->lhs,sb);
             char* type_str = NULL;
@@ -271,7 +299,14 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
                 println("INDIR%s",sb,type_str);
             }
             if(body->ty->kind != body->lhs->ty->kind){
-                type_str = type_to_str(body->ty);
+                // type_str = type_to_str(body->ty);
+                //@TODO: We need to evaluate if what lcc outputs is valid...
+                //Basically, when we have any kind of int and we convert it, lcc always outputs I4
+                //Should we do the same ? Testing should help us here in validating what the end computation does
+                //depending on what opcodes we output.
+                if(type_str[0] == 'I'){
+                    type_str[1] = '0' + 4;
+                }
                 if(body->ty->kind == TY_INT && body->ty->is_unsigned){                
                     println("CVU%s %d",sb,type_str,body->lhs->ty->size);
                 }
@@ -295,18 +330,49 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
             break;
         }
         default:
+            assert(0 && "Unreachable, unless kind isn't supported");
             break;
     }
     return ND_NULL_EXPR;
+}
+typedef struct {
+    char** items;
+    size_t count;
+    size_t capacity;
+} Funcnames;
+
+static Funcnames funcs = {0};
+int is_func(char* name){
+    for(int i =0; i < funcs.count;++i){
+        if(knob_cstr_match(name,funcs.items[i])){
+            return 1;
+        }
+    }
+    return 0;
 }
 void codegen(Obj *prog, FILE *out){
     output_file = out;
     // Knob_String_Builder start = {0};
     Knob_String_Builder end = {0};
-    int func_count = 1;
+    int label_count = 1;
+    for (Obj *fn = prog; fn; fn = fn->next) {
+        if(fn->is_function){
+            knob_da_append(&funcs,fn->name);
+        }
+    }
     Obj* last = NULL;
     for (Obj *fn = prog; fn; fn = fn->next) {
+        if(fn->is_static && fn->is_definition && !is_func(fn->init_data)){
+            if(!last || last->is_function){
+                println("data",&end);
+            }
+            println("align %d",&end,fn->align);
+            println("LABELV $%d",&end,label_count++);
+            println("byte %d %d",&end,fn->ty->size,fn->init_data);
+            last = fn;
+        }
         if (fn->is_function){
+            locals.count = 0;
             println("export %s",&end,fn->name);
             if(!last || !last->is_function){
                 println("code",&end);
@@ -327,7 +393,7 @@ void codegen(Obj *prog, FILE *out){
             for(Node* bod = fn->body->body;bod; bod = bod->next){
                 gen_from_body(bod,&end);
             }
-            println("LABELV $%d",&end,func_count++);
+            println("LABELV $%d",&end,label_count++);
             println("endproc %s %d %d",&end,fn->name,locals_needed_bytes,args_marshalling_bytes);
 
 

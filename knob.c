@@ -2,6 +2,7 @@
 #define KNOB_IMPLEMENTATION
 #include "knob.h"
 
+// #define CHIBICC_IMPL
 #include "./q3vm/q3vm_build.c"
 
 #ifdef CONFIGURED
@@ -150,7 +151,17 @@ defer:
 }
 
 
-MAIN(Q3VM_test){
+MAIN(C2QASM){
+
+    Knob_Cmd cmd = {0};
+    if(!knob_mkdir_if_not_exists("tests")){ return 1;}
+    knob_cmd_append(&cmd,"cc","-ggdb3","tests.c","-o","./tests/run_tests.com");
+    if(!knob_cmd_run_sync(cmd)) return 1;
+    cmd.count = 0;
+    knob_cmd_append(&cmd,"./tests/run_tests.com");
+    if(!knob_cmd_run_sync(cmd)) return 1;
+    // return 0;
+
     // KNOB_GO_REBUILD_URSELF(argc,argv);
 
     if(!knob_mkdir_if_not_exists("build")){ return 1;}
@@ -171,7 +182,6 @@ MAIN(Q3VM_test){
     Knob_Config config = {0};
     knob_config_init(&config);
 
-    Knob_Cmd cmd = {0};
     config.compiler = COMPILER_GCC;
 
     knob_config_add_define(&config,"-ggdb3");
@@ -189,6 +199,7 @@ MAIN(Q3VM_test){
     knob_da_mult_append(&files,
         "src/main.c",
     );
+
     config.build_to = "."PATH_SEP"build";
     knob_config_add_files(&config,files.items,files.count);
     files.count = 0;
@@ -221,7 +232,7 @@ MAIN(Q3VM_test){
         knob_cmd_append(&cmd,out_files.items[i]);
     }
 
-    knob_cmd_append(&cmd,"-o","./Deployment/test.com");
+    knob_cmd_append(&cmd,"-o","./Deployment/runtime_test.com");
     knob_cmd_append(&cmd,"-lm");
     knob_cmd_append(&cmd,"-lstdc++");
 
@@ -233,7 +244,7 @@ MAIN(Q3VM_test){
     q3vm_add_scripts_folder("./q3vm/main_script");
     q3vm_add_scripts_folder("./scripts");
     q3vm_add_scripts_folder("./q3vm/scripts");
-    if(q3vm_build(".",0) == -1) return 1;
+    if(q3vm_build(".",1) == -1) return 1;
     return 0;
 }
 #else
