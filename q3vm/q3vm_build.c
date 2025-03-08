@@ -10,7 +10,14 @@ typedef struct {
     size_t capacity;
 } Scripts;
 
+typedef enum {
+    Q3BUILD_NO,
+    Q3BUILD_VERIFY,
+    Q3BUILD_LINK,
+} Q3VM_Build_Opt;
+
 static Scripts q3vm_scripts = {0};
+static int q3vm_search_recursive = 1;
 static void q3vm_add_scripts_folder(const char* folder_path){
     Knob_File_Paths files = {0};
     knob_read_entire_dir(folder_path,&files);
@@ -21,7 +28,7 @@ static void q3vm_add_scripts_folder(const char* folder_path){
         memset(filepath,0,260);
         int wrote = snprintf(filepath,260,"%s"PATH_SEP"%s",folder_path,filename);
         assert(wrote >= 0);
-        if(knob_get_file_type(filepath) == KNOB_FILE_DIRECTORY){
+        if(knob_get_file_type(filepath) == KNOB_FILE_DIRECTORY && q3vm_search_recursive){
             q3vm_add_scripts_folder(filepath);
         }
         else if(knob_cstr_ends(filepath,".c")){
@@ -30,7 +37,7 @@ static void q3vm_add_scripts_folder(const char* folder_path){
     }
 }
 #define ASM_FOLDER "Deployment"
-static int q3vm_build(const char* root, int verifyBeforeBuild){
+static int q3vm_build(const char* root, Q3VM_Build_Opt build_opt){
     size_t checkpoint = knob_temp_save();
     #ifdef CHIBICC_IMPL
     #define LCC "%s/bin/chibicc.com"
@@ -64,7 +71,7 @@ static int q3vm_build(const char* root, int verifyBeforeBuild){
         filename[sv_len-2] = '\0';
 
         char* asmName = knob_temp_sprintf("%s"PATH_SEP"build"PATH_SEP"%s.asm",root,filename);
-        if(!verifyBeforeBuild || (verifyBeforeBuild && knob_needs_rebuild1(asmName,scriptName))){
+        if(!build_opt || (build_opt && knob_needs_rebuild1(asmName,scriptName))){
             isRebuild = 1;
             knob_cmd_append(&cmd,knob_temp_sprintf(LCC,root),CFLAGS(asmName,scriptName),"-DQ3_VM");
             if(!knob_cmd_run_sync(cmd)){
@@ -76,7 +83,7 @@ static int q3vm_build(const char* root, int verifyBeforeBuild){
         cmd.count = 0;
     }
 
-    if(isRebuild){
+    if(isRebuild || build_opt == Q3BUILD_LINK){
         char* output_path = strlen(root) == 1 && root[0] == '.' ? "."PATH_SEP"Deployment"PATH_SEP : "."PATH_SEP;
         knob_cmd_append(&cmd,knob_temp_sprintf(ASSEMBLER,root),"-v","-m","-o",knob_temp_sprintf("%sbytecode.qvm",output_path));
         for(int i =0; i < num_asm;++i){

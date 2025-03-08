@@ -1,13 +1,25 @@
-
 #include "vm.h"
+#include <stdlib.h>
 
+static FILE* test_out = NULL;
 intptr_t systemCalls(vm_t* vm, intptr_t* args) {
 	const int id = -1 - args[0];
+	if(test_out == NULL){
+		test_out = fopen("test_output.txt","wb");
+	}
 
 	switch (id)
 	{
-	case -1: /* PRINTF */
+	case -5:/* exit*/{
+		fclose(test_out);
+		exit(0);
+		break;
+	}
+	case -1: /* PRINTF */{
+		fprintf(test_out,"%s",(const char*)VMA(1, vm));
 		return printf("%s", (const char*)VMA(1, vm));
+		break;
+	}
 	case -2: /* ERROR */
 		return fprintf(stderr, "%s", (const char*)VMA(1, vm));
 	case -3: /* MEMSET */
@@ -21,5 +33,5 @@ intptr_t systemCalls(vm_t* vm, intptr_t* args) {
 			memcpy(VMA(1, vm), VMA(2, vm), args[3]);
 		}
 		return args[1];
-    }
+    }	
 }

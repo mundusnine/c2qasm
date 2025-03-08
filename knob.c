@@ -154,14 +154,6 @@ defer:
 MAIN(C2QASM){
 
     Knob_Cmd cmd = {0};
-    if(!knob_mkdir_if_not_exists("tests")){ return 1;}
-    knob_cmd_append(&cmd,"cc","-ggdb3","tests.c","-o","./tests/run_tests.com");
-    if(!knob_cmd_run_sync(cmd)) return 1;
-    cmd.count = 0;
-    knob_cmd_append(&cmd,"./tests/run_tests.com");
-    if(!knob_cmd_run_sync(cmd)) return 1;
-    // return 0;
-
     // KNOB_GO_REBUILD_URSELF(argc,argv);
 
     if(!knob_mkdir_if_not_exists("build")){ return 1;}
@@ -240,11 +232,14 @@ MAIN(C2QASM){
     knob_cmd_render(cmd,&render);
     knob_log(KNOB_INFO,"CMD: %s",render.items);
     if(!knob_cmd_run_sync(cmd)) return 1;
-    //BUILD SCRIPTS
-    q3vm_add_scripts_folder("./q3vm/main_script");
-    q3vm_add_scripts_folder("./scripts");
-    q3vm_add_scripts_folder("./q3vm/scripts");
-    if(q3vm_build(".",1) == -1) return 1;
+    
+    cmd.count = 0;
+    if(!knob_mkdir_if_not_exists("tests")){ return 1;}
+    knob_cmd_append(&cmd,"cc","-ggdb3","tests.c","-o","./tests/run_tests.com");
+    if(!knob_cmd_run_sync(cmd)) return 1;
+    cmd.count = 0;
+    knob_cmd_append(&cmd,"./tests/run_tests.com");
+    if(!knob_cmd_run_sync(cmd)) return 1;
     return 0;
 }
 #else

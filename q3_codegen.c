@@ -157,7 +157,7 @@ static Locals locals = {0};
 static int get_local_offset(const char* name){
     int offset = 0;
     for(int i =locals.count-1; i >= 0;--i){
-        if(knob_cstr_match(name,locals.items[i]->name)){
+        if(knob_cstr_match((char*)name,locals.items[i]->name)){
             break;
         }
         offset += 4;
@@ -186,6 +186,24 @@ const char* ops[] = {
     "NEG%s",//ND_NEG
     "MOD%s",//ND_MOD
 };
+int count_decimal_places(double number) {
+    char buffer[50]; 
+    sprintf(buffer,"%f",number);
+
+    char *decimal_point = strchr(buffer, '.');
+    if (decimal_point == NULL) {
+        return 0;
+    }
+    int count =0;
+    int num_zeros = 0;
+    while((++decimal_point)[0] != '\0'){
+        if(decimal_point[0] == '0'){
+            num_zeros++;
+        }
+        count++;
+    }
+    return num_zeros == count ? 0: count;
+}
 int gen_from_body(Node* body,Knob_String_Builder* sb){
     switch(body->kind){
         char* fmt = NULL;
@@ -195,7 +213,7 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
         case ND_MUL:
         case ND_DIV:
         case ND_MOD:
-        fmt = ops[body->kind];
+        fmt = (char*)ops[body->kind];
         gen_from_body(body->lhs,sb);
         char* type_str = NULL;
         // if(end_kind == ND_VAR){
@@ -278,7 +296,16 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
         }
         case ND_NUM: {
             char* type_str = type_to_str(body->ty);
-            println("CNST%s %ld",sb,type_str,body->val);
+            TypeKind kind = body->ty->kind;
+            float val = kind == TY_FLOAT ? (double)body->fval : body->val;
+            int num_decimal = count_decimal_places(val);
+            if( (kind >= TY_FLOAT && kind <= TY_LDOUBLE) && num_decimal){
+                println("CNST%s %.*f",sb,type_str,num_decimal,val);
+            }
+            else {
+                long test = (long)val;
+                println("CNST%s %ld",sb,type_str,(long)val);
+            }
             return ND_NUM;
         }
         case ND_DEREF:{
@@ -304,16 +331,22 @@ int gen_from_body(Node* body,Knob_String_Builder* sb){
                 //Basically, when we have any kind of int and we convert it, lcc always outputs I4
                 //Should we do the same ? Testing should help us here in validating what the end computation does
                 //depending on what opcodes we output.
+                type_str = type_to_str(body->ty);
+                TypeKind lhs_type = body->lhs->ty->kind; 
                 if(type_str[0] == 'I'){
                     type_str[1] = '0' + 4;
                 }
-                if(body->ty->kind == TY_INT && body->ty->is_unsigned){                
+                if((lhs_type == TY_INT || lhs_type == TY_CHAR) && body->lhs->ty->is_unsigned){                
+                    //CVU can only convert to I or U
+                    if(type_str[0] != 'I' && type_str[0] != 'U'){
+                        type_str[0] = 'I';
+                    }
                     println("CVU%s %d",sb,type_str,body->lhs->ty->size);
                 }
-                else if(body->ty->kind == TY_INT){
+                else if(lhs_type == TY_INT || lhs_type == TY_CHAR){
                     println("CVI%s %d",sb,type_str,body->lhs->ty->size);
                 }
-                else if(body->ty->kind == TY_FLOAT){
+                else if(lhs_type == TY_FLOAT){
                     println("CVF%s %d",sb,type_str,body->lhs->ty->size);
                 }
                 else {
@@ -368,7 +401,7 @@ void codegen(Obj *prog, FILE *out){
             }
             println("align %d",&end,fn->align);
             println("LABELV $%d",&end,label_count++);
-            println("byte %d %d",&end,fn->ty->size,fn->init_data);
+            println("byte %d %s",&end,fn->ty->size,fn->init_data);
             last = fn;
         }
         if (fn->is_function){

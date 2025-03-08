@@ -1,6 +1,10 @@
 #define KNOB_IMPLEMENTATION
 #include "knob.h"
 
+#include <time.h>
+
+#include "./q3vm/q3vm_build.c"
+
 int test_cstr_match(char* left, char* right){
     int i =0;
     while(left[i] != '\0' && right[i] != '\0'){
@@ -22,24 +26,27 @@ int test_cstr_match(char* left, char* right){
 // 4. Validate output is the same [X]
 // 5. Validate with inline bytecode [X]
 // 6. Add runtime tests
+    // U 
 #define TESTED_EXE_FILENAME "./bin/chibicc.com"
-#define OUTPUT_FILE "./tests/test_output.asm"
-#define EXE_CMDS "-cc1","-cc1-output",OUTPUT_FILE,"-cc1-input"
+#define EXE_CMDS(out,in) "-cc1","-cc1-output",out,"-cc1-input",in
 
-#define ANSI_RESET "\033[0m"
-#define ANSI_RED(a) "\033[31m" a ANSI_RESET
-#define ANSI_GREEN(a) "\033[32m" a ANSI_RESET
-#define ANSI_YELLOW(a) "\033[33m" a ANSI_RESET
-#define ANSI_BLUE(a) "\033[34m" a ANSI_RESET
-#define ANSI_MAGENTA(a) "\033[34m" a ANSI_RESET
-#define ANSI_CYAN(a) "\033[36m" a ANSI_RESET
+
+#define ANSI_RESET "\e[0m"
+#define ANSI_RED(a) "\e[31m" a ANSI_RESET
+#define ANSI_GREEN(a) "\e[32m" a ANSI_RESET
+#define ANSI_YELLOW(a) "\e[33m" a ANSI_RESET
+#define ANSI_BLUE(a) "\e[34m" a ANSI_RESET
+#define ANSI_MAGENTA(a) "\e[34m" a ANSI_RESET
+#define ANSI_CYAN(a) "\e[36m" a ANSI_RESET
 
 typedef struct {
     const char* name;
     const char* file_gen;
     const char* content;
+    const char* test_file;
+    int test_base_line;
     const char* expected;
-    int (*validation_func)(char*,const char*);
+    int (*validation_func)(char*,const char*, const char *, int);
 } Test;
 
 typedef struct {
@@ -48,53 +55,102 @@ typedef struct {
     size_t capacity;
 } Tests;
 
-int gen_file_do(const char* testname,const char* filename,const char* content,const char* expect,int (*func_do)(char*,const char*)){
-    
-    char* filepath = knob_temp_sprintf("./tests/%s",filename);
+int gen_file_do(const Test* curr){
+    const char* testname = curr->name;
+    const char* filename = curr->file_gen;
+    const char* content = curr->content;
+    const char* expect = curr->expected;
+    int (*func_do)(char*,const char*, const char *, int) = curr->validation_func;
+
+    char* filepath = knob_temp_sprintf("./tests/chibicc/%s",filename);
+    char* lcc_filepath = knob_temp_sprintf("./tests/lcc/%s",filename);
+    char* asmFilename = knob_temp_strdup(filename);
+    asmFilename[strlen(asmFilename)-2] = '\0';
+    char* outpath = knob_temp_sprintf("./tests/chibicc/%s.asm",asmFilename);
+    //The order that we write the files is important since we use this quirk to recompile for 
+    //the runtime tests...
+    knob_write_entire_file(lcc_filepath,(void*)content,strlen(content));
     knob_write_entire_file(filepath,(void*)content,strlen(content));
     Knob_Cmd cmd = {0};
-    knob_cmd_append(&cmd,TESTED_EXE_FILENAME,EXE_CMDS,filepath);
+    knob_cmd_append(&cmd,TESTED_EXE_FILENAME,EXE_CMDS(outpath,filepath));
     if(!knob_cmd_run_sync(cmd)){
         knob_log(KNOB_ERROR,"Failed compilation of test file named: %s",filepath);
         return 0;
     }
     
-    int result = func_do(OUTPUT_FILE,expect);
+    int result = func_do(outpath,expect,curr->test_file,curr->test_base_line);
     if(!result){
         knob_log(KNOB_ERROR,ANSI_RED(ANSI_RED("-------------[TEST] ") ANSI_CYAN("%s") ANSI_RED(" FAILED -------------")),testname);
     }
     return result;
 }
+#define MAX_INT_32 69
+//(int)2147483647/2
+int tests_run_all(Tests* tests,int stop_on_failure){
 
-void tests_run_all(Tests* tests,int stop_on_failure){
-
+    srand(time(NULL));
+    int val1 = rand() % MAX_INT_32;
+    int val2 = rand() % (int)((MAX_INT_32 - val1) * 0.5f);
+    Knob_String_Builder g_main_sb = {0};
+    knob_sb_append_cstr(&g_main_sb,"#include \"../q3vm/scripts/bg_lib.h\"\n\n");
+    knob_sb_append_cstr(&g_main_sb,"void main_init(void){\n");
     size_t succeeded_count = 0;
     for(int i =0; i < tests->count;++i){
         Test curr = tests->items[i];
-        succeeded_count += gen_file_do(curr.name,curr.file_gen,curr.content,curr.expected,curr.validation_func);
+        succeeded_count += gen_file_do(&curr);
+        Knob_String_View sv = knob_sv_from_cstr(curr.content);
+        Knob_String_View type_sv = knob_sv_chop_by_delim(&sv,' ');
+        char temp_type[32] = {0}; 
+        memcpy(temp_type,type_sv.data,type_sv.count);
+        const char* type_format;
+        if(knob_cstr_match(temp_type,"int")){
+            type_format = " \%d";
+        }
+        if(knob_cstr_match(temp_type,"float")){
+            type_format = " \%f";
+        }
+        char temp[64] = {0};
+        int size = snprintf(temp,64,"%s",curr.file_gen);
+        size-=2;
+        temp[size] = '\0';
+        knob_sb_append_cstr(&g_main_sb,"\t{\n\t\tchar temp[64] = {0};\n");
+        knob_sb_append_cstr(&g_main_sb,knob_temp_sprintf("\t\t%s res = ",temp_type));
+        knob_sb_append_buf(&g_main_sb,temp,size);
+        knob_sb_append_cstr(&g_main_sb,knob_temp_sprintf("(%d,%d);\n",val1,val2));
+        knob_sb_append_cstr(&g_main_sb,"\t\tsnprintf(temp,64,\"");
+        knob_sb_append_buf(&g_main_sb,temp,size);
+        knob_sb_append_cstr(&g_main_sb,knob_temp_sprintf("%s\\n\",res);\n",type_format));
+        knob_sb_append_cstr(&g_main_sb,"\t\ttrap_Printf(temp);\n\t}\n");
     }
+    knob_sb_append_cstr(&g_main_sb,"\texit();\n}\n");
+
+    knob_file_del("./build/g_main_impl.asm");
     
     if(succeeded_count != tests->count){
         knob_log(KNOB_ERROR,ANSI_RED("-------------NOT ALL TESTS PASSED-------------"));
+        return 0;
     }
     else{
         knob_log(KNOB_INFO,ANSI_GREEN("-------------ALL TESTS PASSED-------------"));
+        knob_write_entire_file("./tests/g_main_impl.c",(void*)g_main_sb.items,g_main_sb.count);
+        return 1;
     }
 }
 
-int validate_output_match(char* output_filename,const char* expect){
+int validate_output_match(char* output_filename,const char* expect,const char* test_filename,int test_base_line){
     static Knob_String_Builder sb_out = {0};
     static Knob_String_View sv_out = {0};
     static Knob_String_View sv_exp = {0};
     sb_out.count = 0;
     sv_out.count = 0;
     sv_exp.count = 0;
-    knob_read_entire_file(OUTPUT_FILE,&sb_out);
+    knob_read_entire_file(output_filename,&sb_out);
     knob_sb_append_null(&sb_out);
     sv_out = knob_sv_from_cstr(sb_out.items);
     sv_exp = knob_sv_from_cstr(expect);
 
     int matched = 1;
+    int line_count =1;
     while(sv_out.count > 0 && sv_exp.count > 0){
         Knob_String_View line_out = knob_sv_chop_by_delim(&sv_out,'\n');
         Knob_String_View line_exp = knob_sv_chop_by_delim(&sv_exp,'\n');
@@ -109,14 +165,15 @@ int validate_output_match(char* output_filename,const char* expect){
                 temp_err[i] = '~';
             }
             knob_log(KNOB_ERROR,ANSI_YELLOW("Got:"));
-            knob_log(KNOB_ERROR,ANSI_RED("%s"),temp1);
+            knob_log(KNOB_ERROR,ANSI_RED("%s :%s:%d"),temp1,output_filename,line_count);
             knob_log(KNOB_ERROR,ANSI_RED("%s") ANSI_YELLOW("^"),temp_err);
             knob_log(KNOB_ERROR,ANSI_YELLOW("Expected:"));
-            knob_log(KNOB_ERROR,ANSI_RED("%s"),temp2);
+            knob_log(KNOB_ERROR,ANSI_RED("%s :%s%s:%d"),temp2,"./",test_filename,test_base_line+line_count);
             knob_log(KNOB_ERROR,ANSI_RED("%s") ANSI_YELLOW("^"),temp_err);
             matched = 0;
             break;
         }
+        line_count++;
     }
     return matched && sv_out.count == sv_exp.count;
 }
@@ -131,13 +188,15 @@ MAIN(TESTS){
         name: "Add function generation",
         file_gen: "add_test.c",
         content: 
-        "int adder(int a,int b){\n"
+        "int add_test(int a,int b){\n"
         "    return a+b;\n"
         "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
         expected: 
-        "export adder\n"
+        "export add_test\n"
         "code\n"
-        "proc adder 0 0\n"
+        "proc add_test 0 0\n"
         "ADDRFP4 0\n"
         "INDIRI4\n"
         "ADDRFP4 4\n"
@@ -145,7 +204,7 @@ MAIN(TESTS){
         "ADDI4\n"
         "RETI4\n"
         "LABELV $1\n"
-        "endproc adder 0 0\n",
+        "endproc add_test 0 0\n",
         validation_func: validate_output_match
     };
     knob_da_append(&tests,add);
@@ -153,13 +212,15 @@ MAIN(TESTS){
         name: "Add function with type conversion generation",
         file_gen: "conv_add_test.c",
         content: 
-        "int conv_2char(char a,int b){\n"
+        "int conv_add_test(char a,int b){\n"
         "    return a+b;\n"
         "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
         expected: 
-        "export conv_2char\n"
+        "export conv_add_test\n"
         "code\n"
-        "proc conv_2char 0 0\n"
+        "proc conv_add_test 0 0\n"
         "ADDRFP4 0\n"
         "INDIRI1\n"
         "CVII4 1\n"
@@ -168,7 +229,7 @@ MAIN(TESTS){
         "ADDI4\n"
         "RETI4\n"
         "LABELV $1\n"
-        "endproc conv_2char 0 0\n",
+        "endproc conv_add_test 0 0\n",
         validation_func: validate_output_match
     };
     knob_da_append(&tests,conversion);
@@ -176,14 +237,16 @@ MAIN(TESTS){
         name: "Add function with a stacksize(local variable)",
         file_gen: "add_localvar_test.c",
         content: 
-        "int adder_stacksize(int a,int b){\n"
-            "int c = a+b;\n"
-            "return c;\n"
+        "int add_localvar_test(int a,int b){\n"
+        "   int c = a+b;\n"
+        "   return c;\n"
         "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
         expected: 
-        "export adder_stacksize\n"
+        "export add_localvar_test\n"
         "code\n"
-        "proc adder_stacksize 4 0\n"
+        "proc add_localvar_test 4 0\n"
         "ADDRLP4 0\n"
         "ADDRFP4 0\n"
         "INDIRI4\n"
@@ -195,7 +258,7 @@ MAIN(TESTS){
         "INDIRI4\n"
         "RETI4\n"
         "LABELV $1\n"
-        "endproc adder_stacksize 4 0\n",
+        "endproc add_localvar_test 4 0\n",
         validation_func: validate_output_match
     };
     knob_da_append(&tests,add_stacksize);
@@ -203,15 +266,17 @@ MAIN(TESTS){
         name: "Multiop function with a stacksize for 2 local variables",
         file_gen: "multiop_localvar_test.c",
         content: 
-        "int multi_op_and_stacksize(int a,int b){\n"
-            "int c = a-b;\n"
-            "int d = a+c;\n"
-            "return d*c;\n"
+        "int multiop_localvar_test(int a,int b){\n"
+        "   int c = a-b;\n"
+        "   int d = a+c;\n"
+        "   return d*c;\n"
         "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
         expected: 
-        "export multi_op_and_stacksize\n"
+        "export multiop_localvar_test\n"
         "code\n"
-        "proc multi_op_and_stacksize 8 0\n"
+        "proc multiop_localvar_test 8 0\n"
         //;8:    int c = a-b;
         "ADDRLP4 0\n"
         "ADDRFP4 0\n"
@@ -236,7 +301,7 @@ MAIN(TESTS){
         "MULI4\n"
         "RETI4\n"
         "LABELV $1\n"
-        "endproc multi_op_and_stacksize 8 0\n",
+        "endproc multiop_localvar_test 8 0\n",
         validation_func: validate_output_match
     };
     knob_da_append(&tests,multiop_stacksize);
@@ -244,13 +309,15 @@ MAIN(TESTS){
         name: "Add floats function",
         file_gen: "add_floats_test.c",
         content: 
-        "float add_f(float num_a,float num_b){\n"
-            "return num_a + num_b;\n"
+        "float add_floats_test(float num_a,float num_b){\n"
+        "   return num_a + num_b;\n"
         "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
         expected: 
-        "export add_f\n"
+        "export add_floats_test\n"
         "code\n"
-        "proc add_f 0 0\n"
+        "proc add_floats_test 0 0\n"
         "ADDRFP4 0\n"
         "INDIRF4\n"
         "ADDRFP4 4\n"
@@ -258,10 +325,133 @@ MAIN(TESTS){
         "ADDF4\n"
         "RETF4\n"
         "LABELV $1\n"
-        "endproc add_f 0 0\n",      
+        "endproc add_floats_test 0 0\n",      
         validation_func: validate_output_match
     };
     knob_da_append(&tests,add_f);
+    Test add_uf_conv = {
+        name: "Add an unsigned int to a float",
+        file_gen: "add_u42f4_test.c",
+        content: 
+        "float add_u42f4_test(unsigned int num_a,float num_b){\n"
+        "   return num_a + num_b;\n"
+        "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
+        expected: 
+        "export add_u42f4_test\n"
+        "code\n"
+        "proc add_u42f4_test 0 0\n"
+        "ADDRFP4 0\n"
+        "INDIRU4\n"
+        "CVUI4 4\n"
+        "ADDRFP4 4\n"
+        "INDIRF4\n"
+        "ADDF4\n"
+        "RETF4\n"
+        "LABELV $1\n"
+        "endproc add_u42f4_test 0 0\n",      
+        validation_func: validate_output_match
+    };
+    knob_da_append(&tests,add_uf_conv);
+    Test add_If_conv = {
+        name: "Add an int to a float",
+        file_gen: "add_i42f4_test.c",
+        content: 
+        "float add_i42f4_test(int num_a,float num_b){\n"
+        "   float num_b_half = num_b/2.0f;\n"
+        "   return num_a + num_b_half;\n"
+        "}\n",
+        test_file: __FILE__,
+        test_base_line: __LINE__ + 2,
+        expected: 
+        "export add_i42f4_test\n"
+        "code\n"
+        "proc add_i42f4_test 4 0\n"
+        "ADDRLP4 0\n"
+        "ADDRFP4 4\n"
+        "INDIRF4\n"
+        "CNSTF4 2\n"
+        "DIVF4\n"
+        "ASGNF4\n"
+        "ADDRFP4 0\n"
+        "INDIRI4\n"
+        "CVIF4 4\n"
+        "ADDRLP4 0\n"
+        "INDIRF4\n"
+        "ADDF4\n"
+        "RETF4\n"
+        "LABELV $1\n"
+        "endproc add_i42f4_test 4 0\n",      
+        validation_func: validate_output_match
+    };
+    knob_da_append(&tests,add_If_conv);
+    knob_mkdir_if_not_exists("./tests/chibicc");
+    knob_mkdir_if_not_exists("./tests/lcc");
+    if(tests_run_all(&tests,false)){
+        // Knob_File_Paths childs = {0};
+        // knob_read_entire_dir("./build",&childs);
+        // for(int i =0; i < childs.count;++i){
+        //     char* filename = childs.items[i];
+        //     if(knob_cstr_match(filename,"..") || knob_cstr_match(filename,".")) continue;
+        //     char* path = knob_temp_sprintf("./build/%s",childs.items[i]);
+        //     if(knob_cstr_ends(path,".asm")){
+        //         knob_file_del(path);
+        //     }
+        // }
+        Knob_String_Builder sb = {0};
+        q3vm_search_recursive = 0;
+        q3vm_add_scripts_folder("./q3vm/main_script");
+        q3vm_add_scripts_folder("./q3vm/scripts");
+        q3vm_add_scripts_folder("./tests/");
+        q3vm_add_scripts_folder("./tests/lcc");
+        if(q3vm_build(".",Q3BUILD_VERIFY) == -1) return 1;
+        Knob_Cmd cmd = {0};
+        chdir("./Deployment");
+        knob_cmd_append(&cmd,"./runtime_test.com");
+        if(!knob_cmd_run_sync(cmd)){
+            knob_log(KNOB_ERROR,"Failed running runtime !");
+            return 0;
+        }
+        #define LCC_OUT "./lcc_output.txt"
+        #define CHIBICC_OUT "./chibicc_output.txt"
+        knob_file_del(LCC_OUT);
+        knob_file_del(CHIBICC_OUT);
 
-    tests_run_all(&tests,false);
+        knob_rename("./test_output.txt",LCC_OUT);
+        chdir("..");
+        q3vm_scripts.count = 0;
+        q3vm_add_scripts_folder("./q3vm/main_script");
+        q3vm_add_scripts_folder("./q3vm/scripts");
+        q3vm_add_scripts_folder("./tests/");
+        q3vm_add_scripts_folder("./tests/chibicc");
+        for(int i =0; i < tests.count;++i){
+            Test t = tests.items[i];
+            char* asmFilename = knob_temp_strdup(t.file_gen);
+            asmFilename[strlen(asmFilename)-2] = '\0';
+            char* outpath = knob_temp_sprintf("./build/%s.asm",asmFilename);
+            sb.count = 0;
+            knob_read_entire_file(knob_temp_sprintf("./tests/chibicc/%s.asm",asmFilename),&sb);
+            knob_file_del(outpath);
+            knob_write_entire_file(outpath,sb.items,sb.count);
+        }
+        if(q3vm_build(".",Q3BUILD_LINK) == -1) return 1;
+        chdir("./Deployment");
+        knob_cmd_append(&cmd,"./runtime_test.com");
+        if(!knob_cmd_run_sync(cmd)){
+            knob_log(KNOB_ERROR,"Failed running runtime after chibicc compile!");
+            return 0;
+        }
+        knob_rename("./test_output.txt",CHIBICC_OUT);
+        //@TODO: Add validation of both files outputed by each runtime e.g.: They should have the same output.
+        Knob_String_Builder lcc_sb = {0};
+        knob_read_entire_file(LCC_OUT,&lcc_sb);
+        knob_sb_append_null(&lcc_sb);
+        if(validate_output_match(CHIBICC_OUT,lcc_sb.items,&LCC_OUT[2],0)){
+            knob_file_del(LCC_OUT);
+            knob_file_del(CHIBICC_OUT);
+        }
+        chdir("..");
+    }
+    return 0;
 }

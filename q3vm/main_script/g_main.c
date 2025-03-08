@@ -20,27 +20,6 @@ int vmMain(int command, int arg0, int arg1, int arg2, int arg3, int arg4,
             main_init();
             break;
         }
-        // case COMM_UPDATE:
-        // {
-        //     COMP_CALL(comp,Updateable)(arg0,comp);
-        //     break;
-        // }
-        // case COMM_DRAW:
-        // {
-        //     COMP_CALL(comp,Renderable)(arg0,comp);
-        //     break;
-        // }
-        // case COMM_ON_COLLISION:
-        // {
-        //     COMP_CALL(comp,Collideable)(arg0,comp);
-        //     break;
-        // }
-        case COMM_SHUTDOWN:
-            trap_Printf("Shutting down\n");
-            break;
-        default:
-            trap_Error("Unreachable");
-            return -1;
     }
     return 0;
 }
